@@ -380,6 +380,24 @@
   .hl { background: rgba(245,158,11,0.3); color: var(--amber); border-radius: 2px; padding: 0 2px; }
   .resolution-val { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; max-height: 140px; overflow-y: auto; font-size: 12px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
 
+  /* ── Import/Export ── */
+  .btn-green { background: transparent; color: var(--green); border-color: var(--green-dim); }
+  .btn-green:hover { background: var(--green-dim); }
+  .import-modal { max-width: 640px; }
+  .import-drop { border: 2px dashed var(--border2); border-radius: 10px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; margin-bottom: 1rem; }
+  .import-drop:hover, .import-drop.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+  .import-drop p { font-size: 13px; color: var(--muted); margin: 0; }
+  .import-drop p strong { color: var(--text); }
+  .import-preview { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 1rem; max-height: 260px; overflow-y: auto; }
+  .import-preview table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .import-preview th { background: var(--border); color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .05em; padding: 6px 10px; text-align: left; position: sticky; top: 0; }
+  .import-preview td { padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--text); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .import-preview tr:last-child td { border-bottom: none; }
+  .import-note { font-size: 12px; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 1rem; line-height: 1.6; }
+  .import-note code { font-family: var(--font-mono); font-size: 11px; background: var(--border); border-radius: 3px; padding: 1px 5px; color: var(--accent); }
+  .import-count { font-size: 13px; color: var(--green); margin-bottom: 1rem; font-weight: 500; }
+  #importFileInput { display: none; }
+
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
@@ -403,6 +421,14 @@
   <div class="logo">DEPLOY<span>/</span>KB</div>
   <div class="header-right">
     <span id="totalCount"></span>
+    <button class="btn btn-ghost btn-sm" onclick="openImport()" style="font-size:12px">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Import
+    </button>
+    <button class="btn btn-ghost btn-sm" onclick="exportCSV()" style="font-size:12px">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export
+    </button>
     <button class="btn btn-primary" onclick="openAdd()">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       New Entry
@@ -508,6 +534,41 @@
     <div class="confirm-actions">
       <button class="btn btn-ghost" onclick="closeConfirm()">Cancel</button>
       <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal-overlay" id="importOverlay" style="display:none" onclick="if(event.target===this)closeImport()">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-title">
+      <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Import Errors from CSV
+    </div>
+    <div style="font-size:12px;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:1rem;line-height:1.8">
+      Upload a <code style="font-family:var(--font-mono);font-size:11px;background:var(--border);border-radius:3px;padding:1px 5px;color:var(--accent)">.csv</code> with columns:
+      <strong style="color:var(--text)">title, error, severity, status, env, tags, root, resolution</strong><br>
+      Severity: <em>Critical / High / Medium / Low</em> &nbsp;|&nbsp; Status: <em>Open / In Progress / Resolved</em> &nbsp;|&nbsp; Env: <em>Production / Staging / Dev</em><br>
+      Tags: comma-separated e.g. <code style="font-family:var(--font-mono);font-size:11px;background:var(--border);border-radius:3px;padding:1px 5px;color:var(--accent)">kubernetes,nginx</code>
+      &nbsp;&nbsp;<a href="#" onclick="downloadTemplate();return false;" style="color:var(--accent);text-decoration:underline">&#8595; Download template</a>
+    </div>
+    <div id="importDrop" onclick="document.getElementById('importFileInput').click()"
+      style="border:2px dashed var(--border2);border-radius:10px;padding:2rem;text-align:center;cursor:pointer;transition:all .15s;margin-bottom:1rem">
+      <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto 8px;display:block;color:var(--muted)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <p style="font-size:13px;color:var(--muted);margin:0"><strong style="color:var(--text)">Click to choose a CSV file</strong> or drag and drop here</p>
+    </div>
+    <input type="file" id="importFileInput" accept=".csv" style="display:none" onchange="handleImportFile(this.files[0])">
+    <div id="importPreviewWrap" style="display:none">
+      <div id="importCount" style="font-size:13px;color:var(--green);margin-bottom:10px;font-weight:500"></div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:1rem;max-height:240px;overflow-y:auto">
+        <table id="importPreviewTable" style="width:100%;border-collapse:collapse;font-size:12px"></table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeImport()">Cancel</button>
+      <button class="btn btn-primary" id="importBtn" onclick="commitImport()" style="display:none">
+        &#10003; Import All
+      </button>
     </div>
   </div>
 </div>
@@ -712,6 +773,167 @@ function confirmDelete() {
   db.ref('entries/' + deleteId).remove()
     .then(() => closeConfirm())
     .catch(err => alert('Delete failed: ' + err.message));
+}
+
+
+// ── EXPORT ────────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const all = Object.keys(records).map(id => Object.assign({ _id: id }, records[id]));
+  if (!all.length) { alert('No entries to export.'); return; }
+
+  const cols = ['title','error','severity','status','env','tags','root','resolution','date'];
+  const header = cols.join(',');
+  const rows = all.map(r =>
+    cols.map(c => {
+      const val = String(r[c] || '').replace(/"/g, '""');
+      return `"${val}"`;
+    }).join(',')
+  );
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'deployment-kb-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── TEMPLATE ──────────────────────────────────────────────────────────────────
+function downloadTemplate() {
+  const header = 'title,error,severity,status,env,tags,root,resolution';
+  const sample = '"OOMKilled: Container memory limit exceeded","OOMKilled exit code 137","Critical","Resolved","Production","kubernetes,memory","JVM heap not tuned for container limits","Added -XX:MaxRAMPercentage=75.0 and redeployed pod"';
+  const csv  = [header, sample].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'deployment-kb-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── IMPORT ────────────────────────────────────────────────────────────────────
+let importedRows = [];
+
+function openImport() {
+  importedRows = [];
+  document.getElementById('importFileInput').value = '';
+  document.getElementById('importPreviewWrap').style.display = 'none';
+  document.getElementById('importBtn').style.display = 'none';
+  document.getElementById('importOverlay').style.display = 'flex';
+
+  // drag-and-drop support
+  const drop = document.getElementById('importDrop');
+  drop.ondragover = e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; drop.style.background = 'var(--accent-dim)'; };
+  drop.ondragleave = () => { drop.style.borderColor = ''; drop.style.background = ''; };
+  drop.ondrop = e => {
+    e.preventDefault();
+    drop.style.borderColor = ''; drop.style.background = '';
+    const file = e.dataTransfer.files[0];
+    if (file) handleImportFile(file);
+  };
+}
+
+function closeImport() {
+  document.getElementById('importOverlay').style.display = 'none';
+  importedRows = [];
+}
+
+function handleImportFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const rows = parseCSV(text);
+    if (rows.length < 2) { alert('File appears empty or has no data rows.'); return; }
+
+    const headers = rows[0].map(h => h.trim().toLowerCase());
+    const required = ['title','error'];
+    for (const r of required) {
+      if (!headers.includes(r)) { alert(`Missing required column: "${r}"`); return; }
+    }
+
+    importedRows = rows.slice(1).filter(r => r.some(c => c.trim())).map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = (row[i] || '').trim(); });
+      return {
+        title:      obj.title      || '',
+        error:      obj.error      || '',
+        severity:   ['Critical','High','Medium','Low'].includes(obj.severity)        ? obj.severity   : 'Medium',
+        status:     ['Open','In Progress','Resolved'].includes(obj.status)           ? obj.status     : 'Open',
+        env:        ['Production','Staging','Dev'].includes(obj.env)                 ? obj.env        : 'Dev',
+        tags:       obj.tags       || '',
+        root:       obj.root       || '',
+        resolution: obj.resolution || '',
+        date:       obj.date       || new Date().toISOString().slice(0,10),
+        updatedAt:  Date.now()
+      };
+    });
+
+    // Preview table
+    const previewCols = ['title','error','severity','status','env'];
+    const tableHTML =
+      '<thead><tr>' + previewCols.map(c => `<th style="background:var(--border);color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.05em;padding:6px 10px;text-align:left">${c}</th>`).join('') + '</tr></thead>' +
+      '<tbody>' + importedRows.slice(0, 50).map(r =>
+        '<tr>' + previewCols.map(c => `<td style="padding:6px 10px;border-bottom:1px solid var(--border);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r[c])}">${esc(r[c])}</td>`).join('') + '</tr>'
+      ).join('') + '</tbody>';
+
+    document.getElementById('importPreviewTable').innerHTML = tableHTML;
+    document.getElementById('importCount').textContent = `✓ ${importedRows.length} row${importedRows.length===1?'':'s'} ready to import${importedRows.length > 50 ? ' (showing first 50 in preview)' : ''}`;
+    document.getElementById('importPreviewWrap').style.display = 'block';
+    document.getElementById('importBtn').style.display = 'inline-flex';
+  };
+  reader.readAsText(file);
+}
+
+function commitImport() {
+  if (!importedRows.length) return;
+  const btn = document.getElementById('importBtn');
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+
+  const updates = {};
+  importedRows.forEach(rec => {
+    const key = db.ref('entries').push().key;
+    updates['entries/' + key] = rec;
+  });
+
+  db.ref().update(updates)
+    .then(() => {
+      closeImport();
+      alert(`✓ ${importedRows.length} entries imported successfully!`);
+    })
+    .catch(err => {
+      alert('Import failed: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = '✓ Import All';
+    });
+}
+
+// Simple CSV parser (handles quoted fields with commas/newlines)
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i+1];
+    if (inQuotes) {
+      if (ch === '"' && next === '"') { field += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { field += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n' || (ch === '\r' && next === '\n')) {
+        row.push(field); field = '';
+        if (row.some(c => c)) rows.push(row);
+        row = [];
+        if (ch === '\r') i++;
+      } else { field += ch; }
+    }
+  }
+  if (field || row.length) { row.push(field); if (row.some(c=>c)) rows.push(row); }
+  return rows;
 }
 
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────────
