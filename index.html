@@ -387,11 +387,7 @@
 
   /* ── Import/Export ── */
   #importFileInput { display: none; }
-  .import-drop {
-    border: 2px dashed var(--border2); border-radius: 10px;
-    padding: 2.5rem 2rem; text-align: center; cursor: pointer;
-    transition: border-color .15s, background .15s; margin-bottom: 1rem;
-  }
+  .import-drop { border: 2px dashed var(--border2); border-radius: 10px; padding: 2.5rem 2rem; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; margin-bottom: 1rem; }
   .import-drop:hover { border-color: var(--accent); background: var(--accent-dim); }
   .import-drop p { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
   .import-drop p strong { color: var(--text); }
@@ -400,6 +396,12 @@
   .import-preview-wrap th { background: var(--border); color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing:.05em; padding: 6px 10px; text-align: left; position: sticky; top: 0; }
   .import-preview-wrap td { padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--text); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .import-preview-wrap tr:last-child td { border-bottom: none; }
+  .dup-badge { font-family: var(--font-mono); font-size: 10px; background: var(--amber-dim); color: #fcd34d; border: 1px solid rgba(245,158,11,0.3); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+  .toast { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 999; font-family: var(--font-mono); font-size: 12px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 16px; transform: translateY(80px); opacity: 0; transition: all .25s ease; pointer-events: none; max-width: 340px; }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.toast-ok   { border-color: rgba(34,197,94,0.4);  color: #86efac; }
+  .toast.toast-warn { border-color: rgba(245,158,11,0.4); color: #fcd34d; }
+  .toast.toast-err  { border-color: rgba(239,68,68,0.4);  color: #fca5a5; }
 </style>
 </head>
 <body>
@@ -523,52 +525,61 @@
 
 <!-- Firebase compat SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js">
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+var _toastTimer;
+function showToast(msg, type) {
+  var el = document.getElementById('appToast');
+  el.textContent = msg;
+  el.className = 'toast show toast-' + (type||'ok');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ el.className = 'toast'; }, 3000);
+}
+
 // ── EXPORT ────────────────────────────────────────────────────────────────────
 function exportCSV() {
   const all = Object.keys(records).map(id => Object.assign({ _id: id }, records[id]));
   if (!all.length) { alert('No entries to export.'); return; }
   const cols = ['title','error','severity','status','env','root','resolution','date'];
-  const header = cols.join(',');
   const rows = all.map(r => cols.map(c => '"' + String(r[c]||'').replace(/"/g,'""') + '"').join(','));
-  const csv  = [header, ...rows].join('\n');
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([[cols.join(','), ...rows].join('\n')], { type:'text/csv' }));
   a.download = 'deployment-kb-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
+  showToast('Exported ' + all.length + ' entries', 'ok');
 }
 
-// ── TEMPLATE DOWNLOAD ─────────────────────────────────────────────────────────
+// ── TEMPLATE ──────────────────────────────────────────────────────────────────
 function downloadTemplate() {
   const csv = 'title,error,severity,status,env,root,resolution\n' +
     '"OOMKilled: Container memory limit exceeded","OOMKilled exit code 137","Critical","Resolved","Production","JVM heap not tuned for container limits","Added -XX:MaxRAMPercentage=75.0 and redeployed pod."';
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
   a.download = 'deployment-kb-template.csv';
   a.click();
 }
 
 // ── IMPORT ────────────────────────────────────────────────────────────────────
 var importedRows = [];
+var importDupCount = 0;
 
 function openImport() {
-  importedRows = [];
+  importedRows = []; importDupCount = 0;
   document.getElementById('importFileInput').value = '';
   document.getElementById('importPreviewWrap').style.display = 'none';
   document.getElementById('importBtn').style.display = 'none';
+  document.getElementById('importSkipBtn').style.display = 'none';
+  document.getElementById('importDupWarn').style.display = 'none';
   document.getElementById('importOverlay').style.display = 'flex';
 
   var drop = document.getElementById('importDrop');
-  drop.ondragover  = function(e) { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; drop.style.background = 'var(--accent-dim)'; };
-  drop.ondragleave = function()  { drop.style.borderColor = ''; drop.style.background = ''; };
-  drop.ondrop      = function(e) {
-    e.preventDefault(); drop.style.borderColor = ''; drop.style.background = '';
-    if (e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]);
-  };
+  drop.ondragover  = function(e){ e.preventDefault(); drop.style.borderColor='var(--accent)'; drop.style.background='var(--accent-dim)'; };
+  drop.ondragleave = function(){ drop.style.borderColor=''; drop.style.background=''; };
+  drop.ondrop      = function(e){ e.preventDefault(); drop.style.borderColor=''; drop.style.background=''; if(e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]); };
 }
 
 function closeImport() {
   document.getElementById('importOverlay').style.display = 'none';
-  importedRows = [];
+  importedRows = []; importDupCount = 0;
 }
 
 function handleImportFile(file) {
@@ -578,129 +589,178 @@ function handleImportFile(file) {
     var rows = parseCSV(e.target.result);
     if (rows.length < 2) { alert('File appears empty or has no data rows.'); return; }
 
-    var headers = rows[0].map(function(h) { return h.trim().toLowerCase(); });
+    var headers = rows[0].map(function(h){ return h.trim().toLowerCase(); });
     if (headers.indexOf('title') === -1 || headers.indexOf('error') === -1) {
       alert('Missing required columns: title and error'); return;
     }
 
-    importedRows = rows.slice(1).filter(function(r) { return r.some(function(c) { return c.trim(); }); }).map(function(row) {
+    var parsed = rows.slice(1).filter(function(r){ return r.some(function(c){ return c.trim(); }); }).map(function(row){
       var obj = {};
-      headers.forEach(function(h, i) { obj[h] = (row[i]||'').trim(); });
+      headers.forEach(function(h,i){ obj[h] = (row[i]||'').trim(); });
       return {
         title:      obj.title      || '',
         error:      obj.error      || '',
-        severity:   ['Critical','High','Medium','Low'].indexOf(obj.severity)          > -1 ? obj.severity   : 'Medium',
-        status:     ['Open','In Progress','Resolved'].indexOf(obj.status)             > -1 ? obj.status     : 'Open',
-        env:        ['Production','Dev','Implementation','Test'].indexOf(obj.env)     > -1 ? obj.env        : 'Dev',
+        severity:   ['Critical','High','Medium','Low'].indexOf(obj.severity)      > -1 ? obj.severity : 'Medium',
+        status:     ['Open','In Progress','Resolved'].indexOf(obj.status)         > -1 ? obj.status   : 'Open',
+        env:        ['Production','Dev','Implementation','Test'].indexOf(obj.env) > -1 ? obj.env      : 'Dev',
         root:       obj.root       || '',
         resolution: obj.resolution || '',
         date:       obj.date       || new Date().toISOString().slice(0,10),
-        updatedAt:  Date.now()
+        updatedAt:  Date.now(),
+        _isDup:     false
       };
     });
 
-    var cols = ['title','error','severity','status','env'];
-    var thead = '<thead><tr>' + cols.map(function(c) {
-      return '<th>' + c + '</th>';
-    }).join('') + '</tr></thead>';
-    var tbody = '<tbody>' + importedRows.slice(0,50).map(function(r) {
-      return '<tr>' + cols.map(function(c) {
-        return '<td title="' + esc(r[c]) + '">' + esc(r[c]) + '</td>';
-      }).join('') + '</tr>';
-    }).join('') + '</tbody>';
+    // ── Check duplicates against existing Firebase records ──────────────────
+    var existing = Object.values(records);
+    importDupCount = 0;
+    parsed.forEach(function(r) {
+      var titleLow = r.title.toLowerCase();
+      var errorLow = r.error.toLowerCase();
+      var found = existing.find(function(ex){
+        return ex.title.toLowerCase() === titleLow || ex.error.toLowerCase() === errorLow;
+      });
+      if (found) { r._isDup = true; importDupCount++; }
+    });
 
+    importedRows = parsed;
+
+    // Preview table
+    var cols = ['title','error','severity','status','env'];
+    var thead = '<thead><tr>' + cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '<th>status</th></tr></thead>';
+    var tbody = '<tbody>' + importedRows.slice(0,50).map(function(r){
+      var dupBadge = r._isDup ? '<span class="dup-badge">duplicate</span>' : '<span style="font-size:10px;color:var(--green)">new</span>';
+      return '<tr style="' + (r._isDup ? 'opacity:0.6' : '') + '">' +
+        cols.map(function(c){ return '<td title="' + esc(r[c]) + '">' + esc(r[c]) + '</td>'; }).join('') +
+        '<td>' + dupBadge + '</td></tr>';
+    }).join('') + '</tbody>';
     document.getElementById('importPreviewTable').innerHTML = thead + tbody;
-    document.getElementById('importCount').textContent = '✓ ' + importedRows.length + ' row' + (importedRows.length===1?'':'s') + ' ready to import' + (importedRows.length>50?' (showing first 50)':'');
+
+    var newCount = importedRows.length - importDupCount;
+    var countEl = document.getElementById('importCount');
+    countEl.style.color = importDupCount > 0 ? '#fcd34d' : '#22c55e';
+    countEl.textContent = importedRows.length + ' row' + (importedRows.length===1?'':'s') + ' found — ' + newCount + ' new, ' + importDupCount + ' duplicate' + (importDupCount===1?'':'s');
+
+    var dupWarn = document.getElementById('importDupWarn');
+    if (importDupCount > 0) {
+      dupWarn.style.display = 'block';
+      dupWarn.textContent = '⚠ ' + importDupCount + ' duplicate' + (importDupCount===1?' entry was':' entries were') + ' found. Use "Skip Duplicates" to import new entries only, or "Import All" to import everything.';
+      document.getElementById('importSkipBtn').style.display = 'inline-flex';
+    } else {
+      dupWarn.style.display = 'none';
+      document.getElementById('importSkipBtn').style.display = 'none';
+    }
+
     document.getElementById('importPreviewWrap').style.display = 'block';
     document.getElementById('importBtn').style.display = 'inline-flex';
   };
   reader.readAsText(file);
 }
 
-function commitImport() {
-  if (!importedRows.length) return;
-  var btn = document.getElementById('importBtn');
+function commitImport(skipDups) {
+  var toImport = skipDups ? importedRows.filter(function(r){ return !r._isDup; }) : importedRows;
+  if (!toImport.length) { alert('No entries to import.'); return; }
+
+  var btn = skipDups ? document.getElementById('importSkipBtn') : document.getElementById('importBtn');
   btn.disabled = true; btn.textContent = 'Importing…';
+
   var updates = {};
-  importedRows.forEach(function(rec) {
-    updates['entries/' + db.ref('entries').push().key] = rec;
+  toImport.forEach(function(rec) {
+    var clean = { title:rec.title, error:rec.error, severity:rec.severity, status:rec.status, env:rec.env, root:rec.root, resolution:rec.resolution, date:rec.date, updatedAt:rec.updatedAt };
+    updates['entries/' + db.ref('entries').push().key] = clean;
   });
+
   db.ref().update(updates)
-    .then(function() { closeImport(); alert('✓ ' + importedRows.length + ' entries imported!'); })
-    .catch(function(err) { alert('Import failed: ' + err.message); btn.disabled=false; btn.textContent='✓ Import All'; });
+    .then(function(){
+      closeImport();
+      showToast('✓ ' + toImport.length + ' entries imported!', 'ok');
+    })
+    .catch(function(err){
+      alert('Import failed: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = skipDups ? 'Skip Duplicates' : '✓ Import All';
+    });
 }
 
 function parseCSV(text) {
   var rows=[], row=[], field='', inQ=false;
-  for (var i=0; i<text.length; i++) {
+  for (var i=0;i<text.length;i++) {
     var ch=text[i], nx=text[i+1];
     if (inQ) {
-      if (ch==='"' && nx==='"') { field+='"'; i++; }
-      else if (ch==='"') { inQ=false; }
-      else { field+=ch; }
+      if (ch==='"'&&nx==='"'){field+='"';i++;}
+      else if (ch==='"'){inQ=false;}
+      else{field+=ch;}
     } else {
-      if (ch==='"') { inQ=true; }
-      else if (ch===',') { row.push(field); field=''; }
-      else if (ch==='\n'||(ch==='\r'&&nx==='\n')) {
-        row.push(field); field='';
-        if (row.some(function(c){return c;})) rows.push(row);
-        row=[];
-        if (ch==='\r') i++;
-      } else { field+=ch; }
+      if (ch==='"'){inQ=true;}
+      else if (ch===','){row.push(field);field='';}
+      else if (ch==='\n'||(ch==='\r'&&nx==='\n')){
+        row.push(field);field='';
+        if(row.some(function(c){return c;}))rows.push(row);
+        row=[];if(ch==='\r')i++;
+      } else{field+=ch;}
     }
   }
-  if (field||row.length) { row.push(field); if(row.some(function(c){return c;})) rows.push(row); }
+  if(field||row.length){row.push(field);if(row.some(function(c){return c;}))rows.push(row);}
   return rows;
 }
 
 </script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js">
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+var _toastTimer;
+function showToast(msg, type) {
+  var el = document.getElementById('appToast');
+  el.textContent = msg;
+  el.className = 'toast show toast-' + (type||'ok');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ el.className = 'toast'; }, 3000);
+}
+
 // ── EXPORT ────────────────────────────────────────────────────────────────────
 function exportCSV() {
   const all = Object.keys(records).map(id => Object.assign({ _id: id }, records[id]));
   if (!all.length) { alert('No entries to export.'); return; }
   const cols = ['title','error','severity','status','env','root','resolution','date'];
-  const header = cols.join(',');
   const rows = all.map(r => cols.map(c => '"' + String(r[c]||'').replace(/"/g,'""') + '"').join(','));
-  const csv  = [header, ...rows].join('\n');
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([[cols.join(','), ...rows].join('\n')], { type:'text/csv' }));
   a.download = 'deployment-kb-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
+  showToast('Exported ' + all.length + ' entries', 'ok');
 }
 
-// ── TEMPLATE DOWNLOAD ─────────────────────────────────────────────────────────
+// ── TEMPLATE ──────────────────────────────────────────────────────────────────
 function downloadTemplate() {
   const csv = 'title,error,severity,status,env,root,resolution\n' +
     '"OOMKilled: Container memory limit exceeded","OOMKilled exit code 137","Critical","Resolved","Production","JVM heap not tuned for container limits","Added -XX:MaxRAMPercentage=75.0 and redeployed pod."';
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
   a.download = 'deployment-kb-template.csv';
   a.click();
 }
 
 // ── IMPORT ────────────────────────────────────────────────────────────────────
 var importedRows = [];
+var importDupCount = 0;
 
 function openImport() {
-  importedRows = [];
+  importedRows = []; importDupCount = 0;
   document.getElementById('importFileInput').value = '';
   document.getElementById('importPreviewWrap').style.display = 'none';
   document.getElementById('importBtn').style.display = 'none';
+  document.getElementById('importSkipBtn').style.display = 'none';
+  document.getElementById('importDupWarn').style.display = 'none';
   document.getElementById('importOverlay').style.display = 'flex';
 
   var drop = document.getElementById('importDrop');
-  drop.ondragover  = function(e) { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; drop.style.background = 'var(--accent-dim)'; };
-  drop.ondragleave = function()  { drop.style.borderColor = ''; drop.style.background = ''; };
-  drop.ondrop      = function(e) {
-    e.preventDefault(); drop.style.borderColor = ''; drop.style.background = '';
-    if (e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]);
-  };
+  drop.ondragover  = function(e){ e.preventDefault(); drop.style.borderColor='var(--accent)'; drop.style.background='var(--accent-dim)'; };
+  drop.ondragleave = function(){ drop.style.borderColor=''; drop.style.background=''; };
+  drop.ondrop      = function(e){ e.preventDefault(); drop.style.borderColor=''; drop.style.background=''; if(e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]); };
 }
 
 function closeImport() {
   document.getElementById('importOverlay').style.display = 'none';
-  importedRows = [];
+  importedRows = []; importDupCount = 0;
 }
 
 function handleImportFile(file) {
@@ -710,78 +770,118 @@ function handleImportFile(file) {
     var rows = parseCSV(e.target.result);
     if (rows.length < 2) { alert('File appears empty or has no data rows.'); return; }
 
-    var headers = rows[0].map(function(h) { return h.trim().toLowerCase(); });
+    var headers = rows[0].map(function(h){ return h.trim().toLowerCase(); });
     if (headers.indexOf('title') === -1 || headers.indexOf('error') === -1) {
       alert('Missing required columns: title and error'); return;
     }
 
-    importedRows = rows.slice(1).filter(function(r) { return r.some(function(c) { return c.trim(); }); }).map(function(row) {
+    var parsed = rows.slice(1).filter(function(r){ return r.some(function(c){ return c.trim(); }); }).map(function(row){
       var obj = {};
-      headers.forEach(function(h, i) { obj[h] = (row[i]||'').trim(); });
+      headers.forEach(function(h,i){ obj[h] = (row[i]||'').trim(); });
       return {
         title:      obj.title      || '',
         error:      obj.error      || '',
-        severity:   ['Critical','High','Medium','Low'].indexOf(obj.severity)          > -1 ? obj.severity   : 'Medium',
-        status:     ['Open','In Progress','Resolved'].indexOf(obj.status)             > -1 ? obj.status     : 'Open',
-        env:        ['Production','Dev','Implementation','Test'].indexOf(obj.env)     > -1 ? obj.env        : 'Dev',
+        severity:   ['Critical','High','Medium','Low'].indexOf(obj.severity)      > -1 ? obj.severity : 'Medium',
+        status:     ['Open','In Progress','Resolved'].indexOf(obj.status)         > -1 ? obj.status   : 'Open',
+        env:        ['Production','Dev','Implementation','Test'].indexOf(obj.env) > -1 ? obj.env      : 'Dev',
         root:       obj.root       || '',
         resolution: obj.resolution || '',
         date:       obj.date       || new Date().toISOString().slice(0,10),
-        updatedAt:  Date.now()
+        updatedAt:  Date.now(),
+        _isDup:     false
       };
     });
 
-    var cols = ['title','error','severity','status','env'];
-    var thead = '<thead><tr>' + cols.map(function(c) {
-      return '<th>' + c + '</th>';
-    }).join('') + '</tr></thead>';
-    var tbody = '<tbody>' + importedRows.slice(0,50).map(function(r) {
-      return '<tr>' + cols.map(function(c) {
-        return '<td title="' + esc(r[c]) + '">' + esc(r[c]) + '</td>';
-      }).join('') + '</tr>';
-    }).join('') + '</tbody>';
+    // ── Check duplicates against existing Firebase records ──────────────────
+    var existing = Object.values(records);
+    importDupCount = 0;
+    parsed.forEach(function(r) {
+      var titleLow = r.title.toLowerCase();
+      var errorLow = r.error.toLowerCase();
+      var found = existing.find(function(ex){
+        return ex.title.toLowerCase() === titleLow || ex.error.toLowerCase() === errorLow;
+      });
+      if (found) { r._isDup = true; importDupCount++; }
+    });
 
+    importedRows = parsed;
+
+    // Preview table
+    var cols = ['title','error','severity','status','env'];
+    var thead = '<thead><tr>' + cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '<th>status</th></tr></thead>';
+    var tbody = '<tbody>' + importedRows.slice(0,50).map(function(r){
+      var dupBadge = r._isDup ? '<span class="dup-badge">duplicate</span>' : '<span style="font-size:10px;color:var(--green)">new</span>';
+      return '<tr style="' + (r._isDup ? 'opacity:0.6' : '') + '">' +
+        cols.map(function(c){ return '<td title="' + esc(r[c]) + '">' + esc(r[c]) + '</td>'; }).join('') +
+        '<td>' + dupBadge + '</td></tr>';
+    }).join('') + '</tbody>';
     document.getElementById('importPreviewTable').innerHTML = thead + tbody;
-    document.getElementById('importCount').textContent = '✓ ' + importedRows.length + ' row' + (importedRows.length===1?'':'s') + ' ready to import' + (importedRows.length>50?' (showing first 50)':'');
+
+    var newCount = importedRows.length - importDupCount;
+    var countEl = document.getElementById('importCount');
+    countEl.style.color = importDupCount > 0 ? '#fcd34d' : '#22c55e';
+    countEl.textContent = importedRows.length + ' row' + (importedRows.length===1?'':'s') + ' found — ' + newCount + ' new, ' + importDupCount + ' duplicate' + (importDupCount===1?'':'s');
+
+    var dupWarn = document.getElementById('importDupWarn');
+    if (importDupCount > 0) {
+      dupWarn.style.display = 'block';
+      dupWarn.textContent = '⚠ ' + importDupCount + ' duplicate' + (importDupCount===1?' entry was':' entries were') + ' found. Use "Skip Duplicates" to import new entries only, or "Import All" to import everything.';
+      document.getElementById('importSkipBtn').style.display = 'inline-flex';
+    } else {
+      dupWarn.style.display = 'none';
+      document.getElementById('importSkipBtn').style.display = 'none';
+    }
+
     document.getElementById('importPreviewWrap').style.display = 'block';
     document.getElementById('importBtn').style.display = 'inline-flex';
   };
   reader.readAsText(file);
 }
 
-function commitImport() {
-  if (!importedRows.length) return;
-  var btn = document.getElementById('importBtn');
+function commitImport(skipDups) {
+  var toImport = skipDups ? importedRows.filter(function(r){ return !r._isDup; }) : importedRows;
+  if (!toImport.length) { alert('No entries to import.'); return; }
+
+  var btn = skipDups ? document.getElementById('importSkipBtn') : document.getElementById('importBtn');
   btn.disabled = true; btn.textContent = 'Importing…';
+
   var updates = {};
-  importedRows.forEach(function(rec) {
-    updates['entries/' + db.ref('entries').push().key] = rec;
+  toImport.forEach(function(rec) {
+    var clean = { title:rec.title, error:rec.error, severity:rec.severity, status:rec.status, env:rec.env, root:rec.root, resolution:rec.resolution, date:rec.date, updatedAt:rec.updatedAt };
+    updates['entries/' + db.ref('entries').push().key] = clean;
   });
+
   db.ref().update(updates)
-    .then(function() { closeImport(); alert('✓ ' + importedRows.length + ' entries imported!'); })
-    .catch(function(err) { alert('Import failed: ' + err.message); btn.disabled=false; btn.textContent='✓ Import All'; });
+    .then(function(){
+      closeImport();
+      showToast('✓ ' + toImport.length + ' entries imported!', 'ok');
+    })
+    .catch(function(err){
+      alert('Import failed: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = skipDups ? 'Skip Duplicates' : '✓ Import All';
+    });
 }
 
 function parseCSV(text) {
   var rows=[], row=[], field='', inQ=false;
-  for (var i=0; i<text.length; i++) {
+  for (var i=0;i<text.length;i++) {
     var ch=text[i], nx=text[i+1];
     if (inQ) {
-      if (ch==='"' && nx==='"') { field+='"'; i++; }
-      else if (ch==='"') { inQ=false; }
-      else { field+=ch; }
+      if (ch==='"'&&nx==='"'){field+='"';i++;}
+      else if (ch==='"'){inQ=false;}
+      else{field+=ch;}
     } else {
-      if (ch==='"') { inQ=true; }
-      else if (ch===',') { row.push(field); field=''; }
-      else if (ch==='\n'||(ch==='\r'&&nx==='\n')) {
-        row.push(field); field='';
-        if (row.some(function(c){return c;})) rows.push(row);
-        row=[];
-        if (ch==='\r') i++;
-      } else { field+=ch; }
+      if (ch==='"'){inQ=true;}
+      else if (ch===','){row.push(field);field='';}
+      else if (ch==='\n'||(ch==='\r'&&nx==='\n')){
+        row.push(field);field='';
+        if(row.some(function(c){return c;}))rows.push(row);
+        row=[];if(ch==='\r')i++;
+      } else{field+=ch;}
     }
   }
-  if (field||row.length) { row.push(field); if(row.some(function(c){return c;})) rows.push(row); }
+  if(field||row.length){row.push(field);if(row.some(function(c){return c;}))rows.push(row);}
   return rows;
 }
 
@@ -837,7 +937,7 @@ function getFiltered() {
     if (st && r.status   !== st) return false;
     if (ev && r.env      !== ev) return false;
     if (q) {
-      const hay = [r.title, r.error, r.root, r.resolution].join(' ').toLowerCase();
+      const hay = [r.title, r.error, r.root, r.resolution, r.tags||''].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -944,6 +1044,23 @@ function saveRecord() {
   if (!title) { document.getElementById('fTitle').focus(); alert('Title is required.'); return; }
   if (!error) { document.getElementById('fError').focus(); alert('Error message is required.'); return; }
 
+  // ── Duplicate check ──────────────────────────────────────────────────────────
+  if (!editingId) {
+    const titleLow = title.toLowerCase();
+    const errorLow = error.toLowerCase();
+    const dup = Object.values(records).find(r =>
+      r.title.toLowerCase() === titleLow || r.error.toLowerCase() === errorLow
+    );
+    if (dup) {
+      const proceed = confirm(
+        '⚠ Possible duplicate detected!\n\n' +
+        'Existing entry: "' + dup.title + '"\n\n' +
+        'The title or error message matches an existing entry.\nDo you still want to add this as a new entry?'
+      );
+      if (!proceed) return;
+    }
+  }
+
   const rec = {
     title,
     error,
@@ -961,7 +1078,7 @@ function saveRecord() {
     : db.ref('entries').push(rec);
 
   promise
-    .then(() => closeModal())
+    .then(() => { closeModal(); showToast('Entry ' + (editingId ? 'updated' : 'added') + ' successfully', 'ok'); })
     .catch(err => alert('Save failed: ' + err.message));
 }
 
@@ -990,52 +1107,61 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+var _toastTimer;
+function showToast(msg, type) {
+  var el = document.getElementById('appToast');
+  el.textContent = msg;
+  el.className = 'toast show toast-' + (type||'ok');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ el.className = 'toast'; }, 3000);
+}
+
 // ── EXPORT ────────────────────────────────────────────────────────────────────
 function exportCSV() {
   const all = Object.keys(records).map(id => Object.assign({ _id: id }, records[id]));
   if (!all.length) { alert('No entries to export.'); return; }
   const cols = ['title','error','severity','status','env','root','resolution','date'];
-  const header = cols.join(',');
   const rows = all.map(r => cols.map(c => '"' + String(r[c]||'').replace(/"/g,'""') + '"').join(','));
-  const csv  = [header, ...rows].join('\n');
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([[cols.join(','), ...rows].join('\n')], { type:'text/csv' }));
   a.download = 'deployment-kb-' + new Date().toISOString().slice(0,10) + '.csv';
   a.click();
+  showToast('Exported ' + all.length + ' entries', 'ok');
 }
 
-// ── TEMPLATE DOWNLOAD ─────────────────────────────────────────────────────────
+// ── TEMPLATE ──────────────────────────────────────────────────────────────────
 function downloadTemplate() {
   const csv = 'title,error,severity,status,env,root,resolution\n' +
     '"OOMKilled: Container memory limit exceeded","OOMKilled exit code 137","Critical","Resolved","Production","JVM heap not tuned for container limits","Added -XX:MaxRAMPercentage=75.0 and redeployed pod."';
-  const a    = document.createElement('a');
-  a.href     = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
   a.download = 'deployment-kb-template.csv';
   a.click();
 }
 
 // ── IMPORT ────────────────────────────────────────────────────────────────────
 var importedRows = [];
+var importDupCount = 0;
 
 function openImport() {
-  importedRows = [];
+  importedRows = []; importDupCount = 0;
   document.getElementById('importFileInput').value = '';
   document.getElementById('importPreviewWrap').style.display = 'none';
   document.getElementById('importBtn').style.display = 'none';
+  document.getElementById('importSkipBtn').style.display = 'none';
+  document.getElementById('importDupWarn').style.display = 'none';
   document.getElementById('importOverlay').style.display = 'flex';
 
   var drop = document.getElementById('importDrop');
-  drop.ondragover  = function(e) { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; drop.style.background = 'var(--accent-dim)'; };
-  drop.ondragleave = function()  { drop.style.borderColor = ''; drop.style.background = ''; };
-  drop.ondrop      = function(e) {
-    e.preventDefault(); drop.style.borderColor = ''; drop.style.background = '';
-    if (e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]);
-  };
+  drop.ondragover  = function(e){ e.preventDefault(); drop.style.borderColor='var(--accent)'; drop.style.background='var(--accent-dim)'; };
+  drop.ondragleave = function(){ drop.style.borderColor=''; drop.style.background=''; };
+  drop.ondrop      = function(e){ e.preventDefault(); drop.style.borderColor=''; drop.style.background=''; if(e.dataTransfer.files[0]) handleImportFile(e.dataTransfer.files[0]); };
 }
 
 function closeImport() {
   document.getElementById('importOverlay').style.display = 'none';
-  importedRows = [];
+  importedRows = []; importDupCount = 0;
 }
 
 function handleImportFile(file) {
@@ -1045,114 +1171,149 @@ function handleImportFile(file) {
     var rows = parseCSV(e.target.result);
     if (rows.length < 2) { alert('File appears empty or has no data rows.'); return; }
 
-    var headers = rows[0].map(function(h) { return h.trim().toLowerCase(); });
+    var headers = rows[0].map(function(h){ return h.trim().toLowerCase(); });
     if (headers.indexOf('title') === -1 || headers.indexOf('error') === -1) {
       alert('Missing required columns: title and error'); return;
     }
 
-    importedRows = rows.slice(1).filter(function(r) { return r.some(function(c) { return c.trim(); }); }).map(function(row) {
+    var parsed = rows.slice(1).filter(function(r){ return r.some(function(c){ return c.trim(); }); }).map(function(row){
       var obj = {};
-      headers.forEach(function(h, i) { obj[h] = (row[i]||'').trim(); });
+      headers.forEach(function(h,i){ obj[h] = (row[i]||'').trim(); });
       return {
         title:      obj.title      || '',
         error:      obj.error      || '',
-        severity:   ['Critical','High','Medium','Low'].indexOf(obj.severity)          > -1 ? obj.severity   : 'Medium',
-        status:     ['Open','In Progress','Resolved'].indexOf(obj.status)             > -1 ? obj.status     : 'Open',
-        env:        ['Production','Dev','Implementation','Test'].indexOf(obj.env)     > -1 ? obj.env        : 'Dev',
+        severity:   ['Critical','High','Medium','Low'].indexOf(obj.severity)      > -1 ? obj.severity : 'Medium',
+        status:     ['Open','In Progress','Resolved'].indexOf(obj.status)         > -1 ? obj.status   : 'Open',
+        env:        ['Production','Dev','Implementation','Test'].indexOf(obj.env) > -1 ? obj.env      : 'Dev',
         root:       obj.root       || '',
         resolution: obj.resolution || '',
         date:       obj.date       || new Date().toISOString().slice(0,10),
-        updatedAt:  Date.now()
+        updatedAt:  Date.now(),
+        _isDup:     false
       };
     });
 
-    var cols = ['title','error','severity','status','env'];
-    var thead = '<thead><tr>' + cols.map(function(c) {
-      return '<th>' + c + '</th>';
-    }).join('') + '</tr></thead>';
-    var tbody = '<tbody>' + importedRows.slice(0,50).map(function(r) {
-      return '<tr>' + cols.map(function(c) {
-        return '<td title="' + esc(r[c]) + '">' + esc(r[c]) + '</td>';
-      }).join('') + '</tr>';
-    }).join('') + '</tbody>';
+    // ── Check duplicates against existing Firebase records ──────────────────
+    var existing = Object.values(records);
+    importDupCount = 0;
+    parsed.forEach(function(r) {
+      var titleLow = r.title.toLowerCase();
+      var errorLow = r.error.toLowerCase();
+      var found = existing.find(function(ex){
+        return ex.title.toLowerCase() === titleLow || ex.error.toLowerCase() === errorLow;
+      });
+      if (found) { r._isDup = true; importDupCount++; }
+    });
 
+    importedRows = parsed;
+
+    // Preview table
+    var cols = ['title','error','severity','status','env'];
+    var thead = '<thead><tr>' + cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '<th>status</th></tr></thead>';
+    var tbody = '<tbody>' + importedRows.slice(0,50).map(function(r){
+      var dupBadge = r._isDup ? '<span class="dup-badge">duplicate</span>' : '<span style="font-size:10px;color:var(--green)">new</span>';
+      return '<tr style="' + (r._isDup ? 'opacity:0.6' : '') + '">' +
+        cols.map(function(c){ return '<td title="' + esc(r[c]) + '">' + esc(r[c]) + '</td>'; }).join('') +
+        '<td>' + dupBadge + '</td></tr>';
+    }).join('') + '</tbody>';
     document.getElementById('importPreviewTable').innerHTML = thead + tbody;
-    document.getElementById('importCount').textContent = '✓ ' + importedRows.length + ' row' + (importedRows.length===1?'':'s') + ' ready to import' + (importedRows.length>50?' (showing first 50)':'');
+
+    var newCount = importedRows.length - importDupCount;
+    var countEl = document.getElementById('importCount');
+    countEl.style.color = importDupCount > 0 ? '#fcd34d' : '#22c55e';
+    countEl.textContent = importedRows.length + ' row' + (importedRows.length===1?'':'s') + ' found — ' + newCount + ' new, ' + importDupCount + ' duplicate' + (importDupCount===1?'':'s');
+
+    var dupWarn = document.getElementById('importDupWarn');
+    if (importDupCount > 0) {
+      dupWarn.style.display = 'block';
+      dupWarn.textContent = '⚠ ' + importDupCount + ' duplicate' + (importDupCount===1?' entry was':' entries were') + ' found. Use "Skip Duplicates" to import new entries only, or "Import All" to import everything.';
+      document.getElementById('importSkipBtn').style.display = 'inline-flex';
+    } else {
+      dupWarn.style.display = 'none';
+      document.getElementById('importSkipBtn').style.display = 'none';
+    }
+
     document.getElementById('importPreviewWrap').style.display = 'block';
     document.getElementById('importBtn').style.display = 'inline-flex';
   };
   reader.readAsText(file);
 }
 
-function commitImport() {
-  if (!importedRows.length) return;
-  var btn = document.getElementById('importBtn');
+function commitImport(skipDups) {
+  var toImport = skipDups ? importedRows.filter(function(r){ return !r._isDup; }) : importedRows;
+  if (!toImport.length) { alert('No entries to import.'); return; }
+
+  var btn = skipDups ? document.getElementById('importSkipBtn') : document.getElementById('importBtn');
   btn.disabled = true; btn.textContent = 'Importing…';
+
   var updates = {};
-  importedRows.forEach(function(rec) {
-    updates['entries/' + db.ref('entries').push().key] = rec;
+  toImport.forEach(function(rec) {
+    var clean = { title:rec.title, error:rec.error, severity:rec.severity, status:rec.status, env:rec.env, root:rec.root, resolution:rec.resolution, date:rec.date, updatedAt:rec.updatedAt };
+    updates['entries/' + db.ref('entries').push().key] = clean;
   });
+
   db.ref().update(updates)
-    .then(function() { closeImport(); alert('✓ ' + importedRows.length + ' entries imported!'); })
-    .catch(function(err) { alert('Import failed: ' + err.message); btn.disabled=false; btn.textContent='✓ Import All'; });
+    .then(function(){
+      closeImport();
+      showToast('✓ ' + toImport.length + ' entries imported!', 'ok');
+    })
+    .catch(function(err){
+      alert('Import failed: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = skipDups ? 'Skip Duplicates' : '✓ Import All';
+    });
 }
 
 function parseCSV(text) {
   var rows=[], row=[], field='', inQ=false;
-  for (var i=0; i<text.length; i++) {
+  for (var i=0;i<text.length;i++) {
     var ch=text[i], nx=text[i+1];
     if (inQ) {
-      if (ch==='"' && nx==='"') { field+='"'; i++; }
-      else if (ch==='"') { inQ=false; }
-      else { field+=ch; }
+      if (ch==='"'&&nx==='"'){field+='"';i++;}
+      else if (ch==='"'){inQ=false;}
+      else{field+=ch;}
     } else {
-      if (ch==='"') { inQ=true; }
-      else if (ch===',') { row.push(field); field=''; }
-      else if (ch==='\n'||(ch==='\r'&&nx==='\n')) {
-        row.push(field); field='';
-        if (row.some(function(c){return c;})) rows.push(row);
-        row=[];
-        if (ch==='\r') i++;
-      } else { field+=ch; }
+      if (ch==='"'){inQ=true;}
+      else if (ch===','){row.push(field);field='';}
+      else if (ch==='\n'||(ch==='\r'&&nx==='\n')){
+        row.push(field);field='';
+        if(row.some(function(c){return c;}))rows.push(row);
+        row=[];if(ch==='\r')i++;
+      } else{field+=ch;}
     }
   }
-  if (field||row.length) { row.push(field); if(row.some(function(c){return c;})) rows.push(row); }
+  if(field||row.length){row.push(field);if(row.some(function(c){return c;}))rows.push(row);}
   return rows;
 }
 
 </script>
 
+<div id="appToast" class="toast"></div>
+
 <!-- Import Modal -->
 <div class="modal-overlay" id="importOverlay" style="display:none" onclick="if(event.target===this)closeImport()">
-  <div class="modal" style="max-width:600px">
-    <div class="modal-title" style="color:var(--accent)">
-      &#8679; Import Errors from CSV
-    </div>
+  <div class="modal" style="max-width:620px">
+    <div class="modal-title" style="color:var(--accent)">&#8679; Import Errors from CSV</div>
     <div style="font-size:12px;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:1rem;line-height:1.8">
       Upload a <code style="font-family:var(--font-mono);font-size:11px;background:var(--border);border-radius:3px;padding:1px 5px;color:var(--accent)">.csv</code> with columns:
       <strong style="color:var(--text)">title, error, severity, status, env, root, resolution</strong><br>
-      Severity: <em>Critical / High / Medium / Low</em> &nbsp;|&nbsp;
-      Status: <em>Open / In Progress / Resolved</em> &nbsp;|&nbsp;
-      Env: <em>Production / Dev / Implementation / Test</em><br>
-      &nbsp;<a href="#" onclick="downloadTemplate();return false;" style="color:var(--accent);text-decoration:underline">&#8595; Download template CSV</a>
+      Severity: <em>Critical / High / Medium / Low</em> &nbsp;|&nbsp; Status: <em>Open / In Progress / Resolved</em> &nbsp;|&nbsp; Env: <em>Production / Dev / Implementation / Test</em><br>
+      <a href="#" onclick="downloadTemplate();return false;" style="color:var(--accent);text-decoration:underline">&#8595; Download template CSV</a>
     </div>
     <div class="import-drop" id="importDrop" onclick="document.getElementById('importFileInput').click()">
-      <svg width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto;display:block;color:var(--muted)">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
+      <svg width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto;display:block;color:var(--muted)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       <p><strong>Click to choose a CSV file</strong> or drag and drop here</p>
     </div>
     <input type="file" id="importFileInput" accept=".csv" onchange="handleImportFile(this.files[0])">
     <div id="importPreviewWrap" style="display:none">
-      <div id="importCount" style="font-size:13px;color:var(--green);margin-bottom:8px;font-weight:500"></div>
-      <div class="import-preview-wrap">
-        <table id="importPreviewTable"></table>
-      </div>
+      <div id="importCount" style="font-size:13px;margin-bottom:8px;font-weight:500"></div>
+      <div class="import-preview-wrap"><table id="importPreviewTable"></table></div>
+      <div id="importDupWarn" style="display:none;font-size:12px;color:#fcd34d;background:var(--amber-dim);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:8px 12px;margin-bottom:8px"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeImport()">Cancel</button>
-      <button class="btn btn-primary" id="importBtn" onclick="commitImport()" style="display:none">&#10003; Import All</button>
+      <button class="btn btn-ghost" id="importSkipBtn" onclick="commitImport(true)" style="display:none;color:var(--amber);border-color:var(--amber-dim)">Skip Duplicates</button>
+      <button class="btn btn-primary" id="importBtn" onclick="commitImport(false)" style="display:none">&#10003; Import All</button>
     </div>
   </div>
 </div>
